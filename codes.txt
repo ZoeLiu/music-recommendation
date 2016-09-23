@@ -1,0 +1,72 @@
+# Check Cluster Setup:
+java -version
+ls /usr/lib/hadoop
+ls /usr/lib/zookeeper
+ls /usr/lib/spark/assembly/lib
+
+
+#Download Kafka:
+mkdir oryx
+mv Downloads/kafka_2.10-0.8.2.1.tgz  oryx/
+cd oryx
+tar -xzf kafka_2.10-0.8.2.1.tgz
+cd kafka_2.10-0.8.2.1
+
+#Start the server
+bin/zookeeper-server-start.sh config/zookeeper.properties  #run this if no zookeeper available
+bin/kafka-server-start.sh config/server.properties
+
+#Verify Kafka 
+bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic test
+bin/kafka-topics.sh --list --zookeeper localhost:2181
+
+#Configure Kafka. Create topics
+bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic OryxInput
+bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic OryxUpdate
+bin/kafka-topics.sh --zookeeper localhost:2181/kafka --alter --topic OryxUpdate --config retention.ms=172800000
+
+
+#Run the Oryx layers (start a new terminal):
+cd oryx
+
+./run.sh --layer-jar oryx-batch-2.0.0-alpha-1.jar --conf als-example.conf
+./run.sh --layer-jar oryx-speed-2.0.0-alpha-1.jar --conf als-example.conf
+./run.sh --layer-jar oryx-serving-2.0.0-alpha-1.jar --conf als-example.conf	
+
+
+#Prepare the data:
+cd ~/Downloads
+unzip hetrec2011-lastfm-2k.zip -d .
+tr '\t' ',' < user_artists.dat > user_artists.csv
+vim user_artists.csv
+cp user_artists.csv ~/oryx
+
+
+#Push the input to a serving layer:
+wget --post-file user_artists.csv --output-document - --header "Content-Type: text/csv" http://localhost:8080/ingest
+
+#Check results on HDFS:
+hadoop fs -ls /Oryx/data
+hadoop fs -ls /Oryx/model/1431396068730/X
+hadoop fs -text /Oryx/model/1431396068730/X/part-00000.gz 
+
+hadoop fs -ls /Oryx/model/1431396068730/Y
+hadoop fs -text /Oryx/model/1431396068730/Y/part-00000.gz 
+
+hadoop fs -text /Oryx/model/1431396068730/model.pmml.gz
+
+
+#/ready endpoint for picking up update topic:
+wget --quiet --output-document - --server-response http://localhost:8080/ready
+
+#API endpoints:
+wget --quiet --output-document - --server-response http://localhost:8080/recommend/5
+wget --quiet --output-document - --server-response http://localhost:8080/similarity/709
+wget --quiet --output-document - --server-response http://localhost:8080/estimate/5/65
+wget --quiet --output-document - --server-response http://localhost:8080/mostPopularItems?howMany=8
+wget --quiet --output-document - --server-response http://localhost:8080/mostActiveUsers?howMany=5
+
+
+
+
+
